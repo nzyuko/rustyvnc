@@ -1,10 +1,8 @@
 # RustyVNC
 
-RustyVNC is a standalone HVNC lab tool with a Rust Windows client and a Go relay/viewer server.
+RustyVNC is a standalone HVNC red team tool with a Rust Windows client and a Go relay/viewer server.
 
 The client is Rust and owns the Windows desktop, capture, JPEG encoding, application launch, and input dispatch logic. The server is Go and owns WebSocket transport, frame validation, viewer fan-out, and the minimal browser UI.
-
-This repo is for private lab research and defensive tooling education. It intentionally does not include persistence, evasion, installation logic, automatic privilege changes, or production command-and-control features.
 
 ## Layout
 
@@ -14,9 +12,9 @@ server/   Go relay and browser viewer.
 docs/     Wire protocol notes.
 ```
 
-## Lab Flow
+## Quick Start
 
-Start the server on the lab host:
+Start the server on the operator host:
 
 ```sh
 cd server
@@ -70,4 +68,6 @@ The client-to-server frame payload keeps the existing HVNC markers:
 
 Only one client is supported in the first standalone server. This keeps the extraction small and makes the session lifecycle obvious. Multi-client routing can be added after the core client/server contract is stable.
 
-Bind the server to `127.0.0.1` by default. If you bind to a lab interface, use the optional `-token` flag and keep it inside an isolated lab network.
+Bind the server to `127.0.0.1` by default. If you bind to a non-local interface, use the optional `-token` flag and keep it inside an isolated network.
+
+*Footnote: RustyVNC is intended for authorized research and defense analyst purposes.*

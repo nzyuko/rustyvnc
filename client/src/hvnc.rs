@@ -1942,7 +1942,7 @@ mod win {
             if let Some(session_id) = current_process_session_id() {
                 if session_id == 0 {
                     return Err(
-                        "HVNC requires an interactive user desktop. Current process is running in session 0; start the lab agent from a logged-on desktop session.".into(),
+                        "HVNC requires an interactive user desktop. Current process is running in session 0; start the client from a logged-on desktop session.".into(),
                     );
                 }
             }
