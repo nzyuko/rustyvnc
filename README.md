@@ -46,33 +46,17 @@ With the generated self-signed certificate, add `--accept-invalid-certs` or inst
 
 The client must run in an interactive user session. Session 0 is rejected because it produces misleading black-frame behavior rather than a real desktop capture.
 
-## Current Contract
+## How It Works
 
-The Rust client accepts an `https://` base URL, derives `wss://.../ws/client`, and uses that as the preferred transport. If WSS is unavailable, it falls back to HTTPS polling on `/api/client/poll`. Cleartext `http://` and `ws://` URLs are rejected by the client.
+The Windows client takes an `https://` server URL and tries to open a secure WebSocket connection first. If that path is not available, it automatically falls back to HTTPS polling. Both paths stay encrypted; cleartext URLs are rejected.
 
-A browser viewer connects to `/ws/viewer` over WSS from the HTTPS page.
+The browser viewer is served from the same Go server. When the operator opens the HTTPS page, the viewer connects back over WSS and receives frames from the Windows client.
 
-Viewer commands are JSON text messages. Client frames and input/control messages are binary. The binary frame format sent to viewers is:
-
-```text
-16 bytes  client UUID
-4 bytes   width, little endian
-4 bytes   height, little endian
-n bytes   JPEG frame
-```
-
-The client-to-server frame payload keeps the existing HVNC markers:
-
-```text
-0x00      no frame change
-0x01      JPEG frame: marker + width u32 + height u32 + JPEG
-0x02      input message: marker + msg u32 + wparam u32 + lparam u32
-0x03      control message: marker + action u32
-```
+The client sends JPEG desktop frames to the server. The viewer sends mouse, keyboard, and launch actions back through the server to the client. Wire-format details live in `docs/protocol.md`.
 
 ## Notes
 
-Only one client is supported in the first standalone server. This keeps the extraction small and makes the session lifecycle obvious. Multi-client routing can be added after the core client/server contract is stable.
+Only one client is supported in the first standalone server. This keeps the extraction small and makes the session lifecycle obvious. Multi-client routing can be added after the core client/server behavior is stable.
 
 Bind the server to `127.0.0.1` by default. If you bind to a non-local interface, provide a trusted TLS certificate, use the optional `-token` flag, and keep it inside an isolated network.
 
