@@ -68,4 +68,4 @@ The server sends binary viewer frames:
 n bytes   JPEG frame
 ```
 
-This matches the Fox3 viewer frame shape so the browser canvas logic stays simple.
+The fixed header keeps the browser canvas logic simple and lets viewers ignore frames from other clients if multi-client routing is added later.

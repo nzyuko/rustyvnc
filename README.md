@@ -1,15 +1,15 @@
 # RustyVNC
 
-RustyVNC is a standalone lab extraction of the HVNC component that was first proven inside Fox3 and Missile.
+RustyVNC is a standalone HVNC lab tool with a Rust Windows client and a Go relay/viewer server.
 
 The client is Rust and owns the Windows desktop, capture, JPEG encoding, application launch, and input dispatch logic. The server is Go and owns WebSocket transport, frame validation, viewer fan-out, and the minimal browser UI.
 
-This repo is for private lab research and defensive tooling education. It intentionally does not include persistence, evasion, installation logic, automatic privilege changes, or production C2 features.
+This repo is for private lab research and defensive tooling education. It intentionally does not include persistence, evasion, installation logic, automatic privilege changes, or production command-and-control features.
 
 ## Layout
 
 ```text
-client/   Rust Windows client. The HVNC implementation is adapted from Missile.
+client/   Rust Windows client.
 server/   Go relay and browser viewer.
 docs/     Wire protocol notes.
 ```

