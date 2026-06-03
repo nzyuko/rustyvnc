@@ -61,8 +61,59 @@
       background: var(--bg);
     }
     .status { margin-left: auto; color: var(--fg4); font-size: 12px; }
-    .stage { display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--bg-h); }
-    canvas { max-width: 100%; max-height: 100%; outline: none; cursor: crosshair; background: #000; }
+    .stage {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background: var(--bg-h);
+    }
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      outline: none;
+      cursor: crosshair;
+      background: transparent;
+      opacity: 0;
+    }
+    canvas.has-frame {
+      position: static;
+      width: auto;
+      height: auto;
+      max-width: 100%;
+      max-height: 100%;
+      background: #000;
+      opacity: 1;
+    }
+    .empty-state {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 24px;
+      text-align: center;
+      pointer-events: none;
+      color: var(--fg4);
+    }
+    .empty-state.hidden { display: none; }
+    .empty-title {
+      color: var(--green);
+      font-size: 16px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .empty-detail {
+      max-width: 560px;
+      color: var(--fg2);
+      font-size: 13px;
+      line-height: 1.6;
+    }
     .pill {
       background: var(--bg1);
       color: var(--fg4);
@@ -75,20 +126,20 @@
     .quality { display: inline-flex; align-items: center; gap: 8px; color: var(--fg2); }
     input[type="range"] { accent-color: var(--yellow); }
     .activity {
-      min-height: 38px;
+      min-height: 46px;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 12px;
       padding: 8px 18px;
       background: var(--bg);
       color: var(--fg4);
       font-size: 12px;
       overflow: hidden;
-      white-space: nowrap;
+      white-space: normal;
       box-shadow: 0 -1px 0 var(--bg1);
     }
     .activity strong { color: var(--orange); font-weight: 600; }
-    .activity-log { display: flex; align-items: center; gap: 12px; min-width: 0; overflow: hidden; }
+    .activity-log { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; min-width: 0; overflow: hidden; }
     .event { color: var(--fg4); }
     .event b { color: var(--aqua); font-weight: 500; }
   </style>
@@ -127,6 +178,10 @@
     </section>
     <section class="stage">
       <canvas id="view" tabindex="0"></canvas>
+      <div id="emptyState" class="empty-state">
+        <div id="emptyTitle" class="empty-title">relay ready</div>
+        <div id="emptyDetail" class="empty-detail">Viewer connected. Waiting for a Windows client to check in.</div>
+      </div>
     </section>
     <section class="activity">
       <strong>activity</strong>
@@ -144,10 +199,14 @@
     const quality = document.getElementById('quality');
     const qualityText = document.getElementById('qualityText');
     const activityLog = document.getElementById('activityLog');
+    const emptyState = document.getElementById('emptyState');
+    const emptyTitle = document.getElementById('emptyTitle');
+    const emptyDetail = document.getElementById('emptyDetail');
     let ws;
     let remoteW = 0;
     let remoteH = 0;
     let lastStatus = '';
+    let hasFrame = false;
 
     const vk = {
       Backspace: 0x08, Tab: 0x09, Enter: 0x0D, Escape: 0x1B, ' ': 0x20,
@@ -188,6 +247,7 @@
       activeEl.className = s.active ? 'pill ok' : 'pill';
       const dims = s.width && s.height ? ` ${s.width}x${s.height}` : '';
       statusEl.textContent = `${s.message || 'ready'}${dims} frame=${s.frame_seq || 0}`;
+      updateEmptyState(s);
       const status = `${s.connected ? 'client' : 'no client'} / ${s.active ? 'active' : 'inactive'} / frame=${s.frame_seq || 0}`;
       if (status !== lastStatus) {
         lastStatus = status;
@@ -205,9 +265,30 @@
         canvas.width = bitmap.width;
         canvas.height = bitmap.height;
         ctx.drawImage(bitmap, 0, 0);
+        hasFrame = true;
+        canvas.classList.add('has-frame');
+        emptyState.classList.add('hidden');
         bitmap.close();
         logEvent('frame', `${remoteW}x${remoteH}`);
       });
+    }
+
+    function updateEmptyState(s) {
+      if (hasFrame) return;
+      emptyState.classList.remove('hidden');
+      if (!s.connected) {
+        emptyTitle.textContent = 'relay ready';
+        emptyDetail.textContent = 'Viewer connected. Waiting for a Windows client to check in.';
+      } else if (!s.active) {
+        emptyTitle.textContent = 'client connected';
+        emptyDetail.textContent = 'The relay has a client. Start an HVNC session to request a desktop surface.';
+      } else if (s.frame_seq > 0) {
+        emptyTitle.textContent = 'frame queued';
+        emptyDetail.textContent = 'The session is active and the relay has frame metadata. Rendering should follow.';
+      } else {
+        emptyTitle.textContent = 'session active';
+        emptyDetail.textContent = 'Operator controls are live. Waiting for the first desktop frame from the Windows client.';
+      }
     }
 
     function shortId(id) {
@@ -234,9 +315,11 @@
     function logEvent(kind, text) {
       const item = document.createElement('span');
       item.className = 'event';
-      item.innerHTML = `<b>${kind}</b> ${text}`;
+      const label = document.createElement('b');
+      label.textContent = kind;
+      item.append(label, ` ${text}`);
       activityLog.appendChild(item);
-      while (activityLog.children.length > 6) activityLog.removeChild(activityLog.firstElementChild);
+      while (activityLog.children.length > 10) activityLog.removeChild(activityLog.firstElementChild);
     }
 
     document.getElementById('start').onclick = () => send({ type: 'start', quality: Number(quality.value) });

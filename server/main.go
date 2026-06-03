@@ -340,10 +340,10 @@ func (h *hub) serveClientPoll(w http.ResponseWriter, r *http.Request) {
 
 func (h *hub) ensurePollClient(id uuid.UUID, remote string) *pollClient {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	if p, ok := h.client.(*pollClient); ok && h.clientID == id {
 		p.lastSeen = time.Now()
+		h.mu.Unlock()
 		return p
 	}
 	if h.client != nil {
@@ -359,8 +359,10 @@ func (h *hub) ensurePollClient(id uuid.UUID, remote string) *pollClient {
 	h.height = 0
 	h.frameSeq = 0
 	h.frame = nil
+	h.mu.Unlock()
+
 	log.Printf("client connected over https id=%s remote=%s", id, remote)
-	go h.broadcastStatus("client connected over https")
+	h.broadcastStatus("client connected over https")
 	return p
 }
 
