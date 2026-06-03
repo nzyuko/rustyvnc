@@ -1,0 +1,5 @@
+target/
+client/target/
+server/rustyvnc-server
+*.exe
+*.pdb
