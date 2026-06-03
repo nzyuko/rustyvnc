@@ -62,8 +62,7 @@
     };
 
     function connect() {
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${location.host}/ws/viewer${location.search}`);
+      ws = new WebSocket(`wss://${location.host}/ws/viewer${location.search}`);
       ws.binaryType = 'arraybuffer';
       ws.onopen = () => send({ type: 'status' });
       ws.onclose = () => {

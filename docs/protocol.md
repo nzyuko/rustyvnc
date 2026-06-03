@@ -1,10 +1,12 @@
 # RustyVNC Protocol
 
-RustyVNC uses two WebSocket endpoints.
+RustyVNC uses HTTPS-only transport. The Rust client prefers WSS and falls back to HTTPS polling when a WSS upgrade is unavailable.
 
-`/ws/client` is used by the Rust Windows client.
+`/ws/client` is the preferred WSS endpoint for the Rust Windows client.
 
-`/ws/viewer` is used by the browser viewer.
+`/api/client/poll` is the HTTPS fallback endpoint for the Rust Windows client.
+
+`/ws/viewer` is the WSS endpoint used by the browser viewer.
 
 The server is a relay. It validates frame size and dimensions, stores the latest frame, and fans frames out to connected viewers.
 
@@ -26,6 +28,15 @@ The server sends JSON text commands:
 { "type": "stop" }
 { "type": "ping" }
 ```
+
+The HTTPS fallback wraps the same client events and server commands in JSON envelopes:
+
+```json
+{ "events": [{ "kind": "text", "data": "{\"type\":\"hello\",\"client_id\":\"...\"}" }], "wait": true }
+{ "commands": [{ "kind": "text", "data": "{\"type\":\"start\",\"quality\":70}" }] }
+```
+
+Binary envelopes use base64 in the `data` field. The client long-polls only while idle. Once HVNC is active it sends short HTTPS polls so frame delivery is not blocked behind a long-poll request.
 
 ## Client Binary Frames
 

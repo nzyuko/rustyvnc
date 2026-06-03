@@ -1,13 +1,22 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"embed"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"math/big"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -32,7 +41,7 @@ const (
 type hub struct {
 	mu sync.RWMutex
 
-	client  *peer
+	client  clientSink
 	viewers map[*peer]struct{}
 
 	clientID   uuid.UUID
@@ -48,6 +57,17 @@ type peer struct {
 	conn      *websocket.Conn
 	send      chan outbound
 	closeOnce sync.Once
+}
+
+type pollClient struct {
+	send      chan outbound
+	closeOnce sync.Once
+	lastSeen  time.Time
+}
+
+type clientSink interface {
+	enqueue(kind int, data []byte)
+	close()
 }
 
 type outbound struct {
@@ -79,6 +99,20 @@ type serverCommand struct {
 	Quality int    `json:"quality,omitempty"`
 }
 
+type pollEnvelope struct {
+	Kind string `json:"kind"`
+	Data string `json:"data"`
+}
+
+type pollRequest struct {
+	Events []pollEnvelope `json:"events,omitempty"`
+	Wait   bool           `json:"wait,omitempty"`
+}
+
+type pollResponse struct {
+	Commands []pollEnvelope `json:"commands,omitempty"`
+}
+
 type statusEvent struct {
 	Type       string    `json:"type"`
 	Connected  bool      `json:"connected"`
@@ -106,7 +140,9 @@ var upgrader = websocket.Upgrader{
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:7070", "listen address")
-	token := flag.String("token", "", "optional shared token for client/viewer WebSocket access")
+	token := flag.String("token", "", "optional shared token for client/viewer access")
+	certFile := flag.String("cert", "", "TLS certificate PEM file")
+	keyFile := flag.String("key", "", "TLS private key PEM file")
 	flag.Parse()
 
 	h := &hub{viewers: make(map[*peer]struct{})}
@@ -114,9 +150,32 @@ func main() {
 	mux.HandleFunc("/", serveIndex)
 	mux.HandleFunc("/ws/client", h.auth(*token, h.serveClient))
 	mux.HandleFunc("/ws/viewer", h.auth(*token, h.serveViewer))
+	mux.HandleFunc("/api/client/poll", h.auth(*token, h.serveClientPoll))
 
-	log.Printf("rustyvnc server listening on http://%s", *addr)
-	log.Fatal(http.ListenAndServe(*addr, mux))
+	server := &http.Server{
+		Addr:              *addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	if (*certFile == "") != (*keyFile == "") {
+		log.Fatal("both -cert and -key must be provided, or neither")
+	}
+	if *certFile != "" {
+		log.Printf("rustyvnc server listening on https://%s", *addr)
+		log.Fatal(server.ListenAndServeTLS(*certFile, *keyFile))
+	}
+
+	cert, err := generateSelfSignedCert(*addr)
+	if err != nil {
+		log.Fatalf("generate self-signed certificate: %v", err)
+	}
+	server.TLSConfig = &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{cert},
+	}
+	log.Printf("rustyvnc server listening on https://%s with an ephemeral self-signed certificate", *addr)
+	log.Fatal(server.ListenAndServeTLS("", ""))
 }
 
 func serveIndex(w http.ResponseWriter, r *http.Request) {
@@ -238,11 +297,155 @@ func (h *hub) serveViewer(w http.ResponseWriter, r *http.Request) {
 	log.Printf("viewer disconnected")
 }
 
+func (h *hub) serveClientPoll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id, _ := uuid.Parse(r.URL.Query().Get("id"))
+	if id == uuid.Nil {
+		id = uuid.New()
+	}
+
+	var req pollRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxFrameSize*2)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid poll request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	p := h.ensurePollClient(id, r.RemoteAddr)
+	for _, event := range req.Events {
+		if err := h.handlePollEnvelope(event); err != nil {
+			log.Printf("https client poll error: %v", err)
+			h.broadcastStatus(err.Error())
+		}
+	}
+
+	items := p.drain(64, req.Wait && len(req.Events) == 0)
+	resp := pollResponse{Commands: make([]pollEnvelope, 0, len(items))}
+	for _, item := range items {
+		env, err := envelopeFromOutbound(item)
+		if err != nil {
+			log.Printf("encode poll command: %v", err)
+			continue
+		}
+		resp.Commands = append(resp.Commands, env)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *hub) ensurePollClient(id uuid.UUID, remote string) *pollClient {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if p, ok := h.client.(*pollClient); ok && h.clientID == id {
+		p.lastSeen = time.Now()
+		return p
+	}
+	if h.client != nil {
+		h.client.close()
+	}
+
+	p := newPollClient()
+	h.client = p
+	h.clientID = id
+	h.connID = uuid.Nil
+	h.hvncActive = false
+	h.width = 0
+	h.height = 0
+	h.frameSeq = 0
+	h.frame = nil
+	log.Printf("client connected over https id=%s remote=%s", id, remote)
+	go h.broadcastStatus("client connected over https")
+	return p
+}
+
+func (h *hub) handlePollEnvelope(event pollEnvelope) error {
+	switch event.Kind {
+	case "text":
+		return h.handleClientText([]byte(event.Data))
+	case "binary":
+		data, err := base64.StdEncoding.DecodeString(event.Data)
+		if err != nil {
+			return fmt.Errorf("invalid binary envelope: %w", err)
+		}
+		return h.handleClientBinary(data)
+	default:
+		return fmt.Errorf("unknown poll envelope kind: %s", event.Kind)
+	}
+}
+
+func envelopeFromOutbound(item outbound) (pollEnvelope, error) {
+	switch item.kind {
+	case websocket.TextMessage:
+		return pollEnvelope{Kind: "text", Data: string(item.data)}, nil
+	case websocket.BinaryMessage:
+		return pollEnvelope{Kind: "binary", Data: base64.StdEncoding.EncodeToString(item.data)}, nil
+	default:
+		return pollEnvelope{}, fmt.Errorf("unsupported outbound kind: %d", item.kind)
+	}
+}
+
 func newPeer(conn *websocket.Conn) *peer {
 	return &peer{
 		conn: conn,
 		send: make(chan outbound, 128),
 	}
+}
+
+func newPollClient() *pollClient {
+	return &pollClient{
+		send:     make(chan outbound, 128),
+		lastSeen: time.Now(),
+	}
+}
+
+func (p *pollClient) enqueue(kind int, data []byte) {
+	defer func() {
+		_ = recover()
+	}()
+	select {
+	case p.send <- outbound{kind: kind, data: data}:
+	default:
+	}
+}
+
+func (p *pollClient) drain(max int, wait bool) []outbound {
+	items := make([]outbound, 0, max)
+	if wait {
+		select {
+		case item, ok := <-p.send:
+			if !ok {
+				return items
+			}
+			items = append(items, item)
+		case <-time.After(25 * time.Second):
+			return items
+		}
+	}
+
+	for len(items) < max {
+		select {
+		case item, ok := <-p.send:
+			if !ok {
+				return items
+			}
+			items = append(items, item)
+		default:
+			return items
+		}
+	}
+	return items
+}
+
+func (p *pollClient) close() {
+	p.closeOnce.Do(func() {
+		close(p.send)
+	})
 }
 
 func (p *peer) writer() {
@@ -509,4 +712,75 @@ func actionFromString(name string) uint32 {
 	default:
 		return 0
 	}
+}
+
+func generateSelfSignedCert(addr string) (tls.Certificate, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serial, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName: "RustyVNC ephemeral listener",
+		},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		template.IPAddresses = []net.IP{ip}
+	} else {
+		template.DNSNames = []string{host}
+	}
+	template.DNSNames = appendIfMissing(template.DNSNames, "localhost")
+	template.IPAddresses = appendIPIfMissing(template.IPAddresses, net.ParseIP("127.0.0.1"))
+	template.IPAddresses = appendIPIfMissing(template.IPAddresses, net.ParseIP("::1"))
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	return tls.X509KeyPair(certPEM, keyPEM)
+}
+
+func appendIfMissing(values []string, value string) []string {
+	for _, current := range values {
+		if current == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func appendIPIfMissing(values []net.IP, value net.IP) []net.IP {
+	if value == nil {
+		return values
+	}
+	for _, current := range values {
+		if current.Equal(value) {
+			return values
+		}
+	}
+	return append(values, value)
 }
