@@ -164,6 +164,7 @@ async fn run_websocket(
     let (ws, _) = connect_async(server)
         .await
         .with_context(|| format!("connect wss endpoint {}", server))?;
+    eprintln!("[*] WSS connected: {}", server);
     let (mut writer, mut reader) = ws.split();
 
     writer
